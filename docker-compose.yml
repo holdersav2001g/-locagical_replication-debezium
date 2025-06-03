@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres_db
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres_user
+      - POSTGRES_PASSWORD=postgres_password
+      - POSTGRES_DB=inventory_db
+    volumes:
+      - ./postgres-config/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./postgres-config/pg_hba.conf:/etc/postgresql/pg_hba.conf
+      - ./pgdata:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf -c hba_file=/etc/postgresql/pg_hba.conf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres_user -d inventory_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  zookeeper:
+    image: debezium/zookeeper:2.6
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+      - "2888:2888"
+      - "3888:3888"
+    restart: unless-stopped
+
+  kafka:
+    image: debezium/kafka:2.6
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      # KAFKA_BROKER_ID: 1 # Uncomment if running multiple Kafka brokers
+    depends_on:
+      - zookeeper
+    restart: unless-stopped
+
+  connect:
+    image: debezium/connect:2.6
+    container_name: kafka_connect
+    ports:
+      - "8083:8083"
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: 1
+      CONFIG_STORAGE_TOPIC: my_connect_configs
+      OFFSET_STORAGE_TOPIC: my_connect_offsets
+      STATUS_STORAGE_TOPIC: my_connect_statuses
+      # Ensure Debezium PostgreSQL connector is available
+      # If not included by default in debezium/connect:2.7, you might need a custom image
+      # or to download it into a volume mounted to /kafka/connect/debezium-connector-postgres
+    volumes:
+      - ./debezium-connector-config:/kafka/connect/debezium-connector-config
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started # Kafka doesn't have a simple healthcheck by default
+    restart: unless-stopped
+
+volumes:
+  pgdata:

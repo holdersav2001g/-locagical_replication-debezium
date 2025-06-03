@@ -1,0 +1,5 @@
+# Ignore PostgreSQL data directory
+pgdata/
+
+# Ignore VS Code specific files/folders
+.vscode/
